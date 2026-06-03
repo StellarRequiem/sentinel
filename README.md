@@ -1,6 +1,6 @@
 # sentinel
 
-**An ecosystem health monitor — one command, 🟢🟡🔴 across all your repos. Deterministic, dependency-free.**
+**An ecosystem health monitor *and containment toolkit* — detect problems across all your repos, then fix them, reversibly. Deterministic, dependency-free.**
 
 If you keep more than a couple of repos on a machine, you lose track: which has uncommitted work, which never got pushed, which has rotted, which has a README that *claims* a `pip install` that doesn't exist. `sentinel` scans them all in seconds and tells you — and exits non-zero on anything red, so you can drop it in a cron or a pre-flight check.
 
@@ -8,8 +8,15 @@ If you keep more than a couple of repos on a machine, you lose track: which has 
 
 ```sh
 pip install "git+https://github.com/StellarRequiem/sentinel"
-sentinel ~                              # scan every git repo under your home dir
-sentinel ~/code --exclude vendored-theme
+
+# DETECT — health across every repo under a root
+sentinel ~                              # alias for `sentinel scan ~`
+sentinel scan ~/code --exclude vendored-theme
+
+# CONTAIN — act on what it finds (reversible; dry-run by default)
+sentinel rescue ~/some-repo             # classify uncommitted work vs cruft (dry-run)
+sentinel rescue ~/some-repo --commit    # dated WIP-commit the real work — never pushes
+sentinel groom  ~/some-repo --apply     # add the standard .gitignore patterns
 ```
 
 ## What a run looks like
@@ -43,6 +50,15 @@ On a real machine it routinely catches the things you forgot: unpushed work at r
 - 🟢 clean, pushed, claims accurate
 
 Exit code is `1` if anything is red — CI- and cron-friendly.
+
+## Containment — detect, then *fix*
+
+`sentinel` doesn't just report; it contains, reversibly:
+
+- **`rescue <repo>`** — splits a repo's uncommitted files into **work vs. cruft**, gitignores the cruft, and dated-WIP-commits the real work. *Never pushes, never discards.* Dry-run unless `--commit`.
+- **`groom <repo>`** — adds the standard `.gitignore` patterns the repo is missing (`.DS_Store`, `__pycache__`, `*.command`, logs, `venv/`, …). Dry-run unless `--apply`.
+
+The discipline, inherited from the operator who built it: **cruft is never committed, work is never discarded, and nothing is ever pushed without you.**
 
 ## Tests
 
