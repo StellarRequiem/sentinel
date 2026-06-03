@@ -25,7 +25,8 @@ def is_git(repo) -> bool:
 
 def git_status(repo) -> dict:
     branch = _git(repo, "branch", "--show-current").stdout.strip()
-    dirty = len([ln for ln in _git(repo, "status", "--porcelain").stdout.splitlines() if ln.strip()])
+    dirty_files = [ln[3:] for ln in _git(repo, "status", "--porcelain").stdout.splitlines()
+                   if ln.strip()]
     has_remote = bool(_git(repo, "remote").stdout.strip())
     ahead = behind = 0
     has_upstream = _git(repo, "rev-parse", "--abbrev-ref",
@@ -34,8 +35,9 @@ def git_status(repo) -> dict:
         lr = _git(repo, "rev-list", "--left-right", "--count", "@{u}...HEAD").stdout.split()
         if len(lr) == 2:
             behind, ahead = int(lr[0]), int(lr[1])
-    return {"branch": branch, "dirty": dirty, "has_remote": has_remote,
-            "has_upstream": has_upstream, "ahead": ahead, "behind": behind}
+    return {"branch": branch, "dirty": len(dirty_files), "dirty_files": dirty_files,
+            "has_remote": has_remote, "has_upstream": has_upstream,
+            "ahead": ahead, "behind": behind}
 
 
 def commit_age_days(repo):
@@ -64,7 +66,6 @@ def structure(repo) -> dict:
 
 
 def pypi_published(name, timeout=6):
-    """True if on PyPI, False if 404, None if unknown (network error)."""
     if not name:
         return None
     try:
@@ -77,8 +78,6 @@ def pypi_published(name, timeout=6):
 
 
 def readme_claims_pypi(repo, name) -> bool:
-    """True if the README tells users to `pip install <name>` / `uv add <name>`
-    in a way that implies PyPI (not a git+ / path / editable install)."""
     if not name:
         return False
     p = Path(repo) / "README.md"
@@ -93,7 +92,8 @@ def readme_claims_pypi(repo, name) -> bool:
 
 
 def classify(rep: dict) -> tuple[str, list[str]]:
-    """Return (level, reasons) from a repo report dict. Pure — easy to test."""
+    """Return (level, reasons) from a repo report dict. Pure.
+    Honors rep['overrides']: intentional_local / done / no_tests_ok."""
     reasons: list[str] = []
     level = "green"
 
@@ -105,6 +105,7 @@ def classify(rep: dict) -> tuple[str, list[str]]:
     g = rep.get("git", {})
     age = rep.get("age")
     st = rep.get("structure", {})
+    ov = rep.get("overrides", {})
 
     if g.get("ahead", 0) > 0:
         reasons.append(f"{g['ahead']} unpushed")
@@ -115,16 +116,16 @@ def classify(rep: dict) -> tuple[str, list[str]]:
     if g.get("dirty", 0) > 0:
         reasons.append(f"{g['dirty']} uncommitted")
         bump("red" if (age and age > 3) else "yellow")
-    if not g.get("has_remote", True):
+    if not g.get("has_remote", True) and not ov.get("intentional_local"):
         reasons.append("local-only")
         bump("yellow")
-    if age is not None and age > 30:
+    if age is not None and age > 30 and not ov.get("done"):
         reasons.append(f"{int(age)}d stale")
         bump("yellow")
     if rep.get("pypi_false"):
         reasons.append("README claims PyPI but NOT published")
         bump("red")
-    if not st.get("tests", True):
+    if not st.get("tests", True) and not ov.get("no_tests_ok"):
         reasons.append("no tests")
         bump("yellow")
     if not reasons:

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
-from . import checks, contain
+from . import checks, config, contain
 
 _ICON = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 _ORDER = {"red": 0, "yellow": 1, "green": 2}
@@ -19,10 +19,16 @@ def discover(root) -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_dir() and (p / ".git").exists())
 
 
-def check_repo(path, net=True) -> dict:
-    rep = {"name": Path(path).name, "path": str(path),
+def check_repo(path, net=True, overrides=None) -> dict:
+    overrides = overrides or {}
+    rep = {"name": Path(path).name, "path": str(path), "overrides": overrides,
            "git": checks.git_status(path), "age": checks.commit_age_days(path),
            "structure": checks.structure(path), "pypi_false": False}
+    gen = overrides.get("generated", [])
+    if gen:
+        kept = [f for f in rep["git"]["dirty_files"]
+                if not any(fnmatch(f, g) or f == g for g in gen)]
+        rep["git"]["dirty"] = len(kept)
     pkg = rep["structure"].get("name")
     if net and pkg and checks.readme_claims_pypi(path, pkg):
         rep["pypi_false"] = checks.pypi_published(pkg) is False
@@ -47,8 +53,10 @@ def render(reports) -> str:
 
 
 def _scan(a) -> int:
-    skip = {x.strip() for x in a.exclude.split(",") if x.strip()}
-    reports = [check_repo(p, net=not a.no_net) for p in discover(a.root) if p.name not in skip]
+    cfg = config.load_config(a.config)
+    skip = set(cfg["exclude"]) | {x.strip() for x in a.exclude.split(",") if x.strip()}
+    reports = [check_repo(p, net=not a.no_net, overrides=cfg["repos"].get(p.name, {}))
+               for p in discover(a.root) if p.name not in skip]
     if a.json:
         print(json.dumps(reports, indent=2, default=str))
     else:
@@ -83,6 +91,7 @@ def _groom(a) -> int:
 
 
 def main(argv=None) -> int:
+    import sys
     argv = list(sys.argv[1:] if argv is None else argv)
     known = {"scan", "rescue", "groom", "-h", "--help"}
     if not argv or argv[0] not in known:
@@ -96,6 +105,7 @@ def main(argv=None) -> int:
     sp.add_argument("--no-net", action="store_true", help="skip PyPI / network checks")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--exclude", default="", help="comma-separated repo names to skip")
+    sp.add_argument("--config", default="~/.sentinel.toml", help="per-repo config (TOML)")
 
     rp = sub.add_parser("rescue", help="dated WIP-commit a repo's uncommitted work (dry-run unless --commit)")
     rp.add_argument("repo")
